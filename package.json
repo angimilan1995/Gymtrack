@@ -1,0 +1,17 @@
+{
+  "name": "gymtrack-cloudflare",
+  "version": "1.1.0",
+  "private": true,
+  "description": "GymTrack PWA con Cloudflare Workers e database D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "login": "wrangler login",
+    "db:create": "wrangler d1 create gymtrack-db --jurisdiction eu --binding DB --update-config",
+    "db:migrate": "wrangler d1 execute DB --remote --file=./schema.sql",
+    "db:list": "wrangler d1 list"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
