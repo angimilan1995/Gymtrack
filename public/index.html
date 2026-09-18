@@ -268,7 +268,7 @@ async function syncRemote(){if(!auth.token||auth.syncing||!navigator.onLine)retu
 function isEmptyStarter(d){return Array.isArray(d?.history)&&d.history.length===0&&Array.isArray(d?.days)&&d.days.every(day=>!Array.isArray(day.exercises)||day.exercises.length===0);}
 function legacyData(){try{return JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY)||'null');}catch{return null;}}
 async function loadAccountData(){try{const remote=await api('/api/data');let data=remote.data;const legacy=legacyData();if(isEmptyStarter(data)&&legacy&&(legacy.history?.length||legacy.days?.some(d=>d.exercises?.length))){data=legacy;applyData(data);await syncRemote();notify('Dati della versione precedente importati nel database.');}else{applyData(data);}try{localStorage.setItem(cacheKey(),JSON.stringify(payload()));}catch{}setSyncStatus('ok','Sincronizzato');return true;}catch(err){if(err.status===401){forceLogout('Sessione scaduta. Entra di nuovo.');return false;}const cached=loadLocalCache();if(cached){applyData(cached);setSyncStatus('offline','Offline');return true;}throw err;}}
-function showLogin(message=''){clearInterval(workoutTicker);clearInterval(restTicker);$('appShell').classList.add('hidden');$('loginScreen').classList.remove('hidden');$('loginError').textContent=message;$('loginError').classList.toggle('hidden',!message);$('usernameInput').value=auth.username||'';setTimeout(()=>$('usernameInput').focus(),50);}
+function showLogin(message=''){clearInterval(workoutTicker);clearInterval(restTicker);stopRestAlarm();$('appShell').classList.add('hidden');$('loginScreen').classList.remove('hidden');$('loginError').textContent=message;$('loginError').classList.toggle('hidden',!message);$('usernameInput').value=auth.username||'';setTimeout(()=>$('usernameInput').focus(),50);}
 function showApp(){ $('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');$('logoutBtn').title=`Esci da ${auth.username}`;renderHome();}
 function forceLogout(message=''){auth.token='';localStorage.removeItem(AUTH_TOKEN_KEY);localStorage.removeItem(AUTH_USER_KEY);showLogin(message);}
 async function loginWithUsername(username){const result=await api('/api/login',{method:'POST',body:JSON.stringify({username})});auth.token=result.token;auth.username=result.username;localStorage.setItem(AUTH_TOKEN_KEY,auth.token);localStorage.setItem(AUTH_USER_KEY,auth.username);await loadAccountData();showApp();}
@@ -345,12 +345,48 @@ async function deleteDay(id){const d=state.days.find(x=>x.id===id);if(!d)return;
 async function deleteExercise(id){const day=currentDay(),ex=day?.exercises.find(e=>e.id===id);if(!ex)return;if(!await confirmAction('Elimina esercizio',`Eliminare ${ex.name}?`))return;day.exercises=day.exercises.filter(e=>e.id!==id);save();renderDay();notify('Esercizio eliminato.');}
 function moveExercise(id,direction){const day=currentDay();if(!day)return;const from=day.exercises.findIndex(e=>e.id===id);if(from<0)return;const to=from+direction;if(to<0||to>=day.exercises.length)return;const [moved]=day.exercises.splice(from,1);day.exercises.splice(to,0,moved);save();renderDay();notify(direction<0?'Esercizio spostato su.':'Esercizio spostato giù.');}
 
-function beginWorkout(dayOverride=null){const day=dayOverride||currentDay();if(!day?.exercises.length)return notify('Aggiungi almeno un esercizio.');state.selectedDayId=day.id;state.workout={dayId:day.id,dayName:day.name,startedAt:Date.now(),exercises:day.exercises.map(ex=>{const previous=exerciseHistory(ex.name)[0]||null;return{name:ex.name,rest:ex.rest,sets:Array.from({length:ex.sets},(_,i)=>{const index=i+1;const prevSet=previous?.sets?.find(s=>Number(s.index)===index)||null;return{index,reps:getSetReps(ex)[i],weight:prevSet?Number(prevSet.weight)||0:ex.weight,done:false,previousWeight:prevSet?Number(prevSet.weight)||0:null,previousReps:prevSet?Number(prevSet.reps)||0:null,previousDate:prevSet?(previous.date||''):''};})};})};renderWorkout();clearInterval(workoutTicker);workoutTicker=setInterval(()=>{if(state.workout)$('workoutDuration').textContent=formatTime((Date.now()-state.workout.startedAt)/1000);},1000);}
-function renderWorkout(){const w=state.workout;if(!w)return;$('workoutTitle').textContent=w.dayName;$('workoutDuration').textContent='00:00';els.workoutExercises.innerHTML='';show(els.workoutView);for(const ex of w.exercises){const c=document.createElement('article');c.className='card';const head=document.createElement('div');head.className='exerciseTop';head.innerHTML=`<div><h3>${escapeHtml(ex.name)}</h3><div class="muted">I kg sono precompilati con il carico della stessa serie nell'ultimo allenamento, quando disponibile.</div><div class="mobileHint">Modifica ripetizioni e kg se oggi cambi carico. Il timer parte quando completi la serie.</div></div>`;const rb=document.createElement('button');rb.className='secondary';rb.textContent=`${ex.rest}s recupero`;rb.onclick=()=>setRest(ex.rest);head.appendChild(rb);c.appendChild(head);for(const s of ex.sets){const row=document.createElement('div');row.className='setRow'+(s.done?' completed':'');const previous=s.previousWeight!==null&&s.previousWeight!==undefined?`<div class="previousSetReference"><span>Ultima volta: <strong>${s.previousReps} rip. × ${s.previousWeight} kg</strong></span>${s.previousDate?`<span class="previousDate">${escapeHtml(s.previousDate)}</span>`:''}</div>`:'';row.innerHTML=`${previous}<label class="setCheck"><input type="checkbox" ${s.done?'checked':''}><span>Serie ${s.index}</span></label><label class="setField"><span>RIPETIZIONI</span><input class="reps" inputmode="numeric" type="number" min="0" max="100" value="${s.reps}"></label><label class="setField"><span>PESO KG</span><input class="weight" inputmode="decimal" type="number" min="0" max="1000" step="0.5" value="${s.weight}"></label>`;const chk=row.querySelector('input[type=checkbox]');chk.onchange=()=>{s.done=chk.checked;row.classList.toggle('completed',s.done);if(chk.checked)setRest(ex.rest);};row.querySelector('.weight').oninput=e=>s.weight=clamp(e.target.value,0,1000,0);row.querySelector('.reps').oninput=e=>s.reps=Math.round(clamp(e.target.value,0,100,0));c.appendChild(row);}els.workoutExercises.appendChild(c);}}
+function beginWorkout(dayOverride=null){const day=dayOverride||currentDay();if(!day?.exercises.length)return notify('Aggiungi almeno un esercizio.');state.selectedDayId=day.id;state.workout={dayId:day.id,dayName:day.name,startedAt:Date.now(),exercises:day.exercises.map(ex=>{const previous=exerciseHistory(ex.name)[0]||null;return{name:ex.name,notes:ex.notes||'',rest:ex.rest,sets:Array.from({length:ex.sets},(_,i)=>{const index=i+1;const prevSet=previous?.sets?.find(s=>Number(s.index)===index)||null;return{index,reps:getSetReps(ex)[i],weight:prevSet?Number(prevSet.weight)||0:ex.weight,done:false,previousWeight:prevSet?Number(prevSet.weight)||0:null,previousReps:prevSet?Number(prevSet.reps)||0:null,previousDate:prevSet?(previous.date||''):''};})};})};renderWorkout();clearInterval(workoutTicker);workoutTicker=setInterval(()=>{if(state.workout)$('workoutDuration').textContent=formatTime((Date.now()-state.workout.startedAt)/1000);},1000);}
+function renderWorkout(){const w=state.workout;if(!w)return;$('workoutTitle').textContent=w.dayName;$('workoutDuration').textContent='00:00';els.workoutExercises.innerHTML='';show(els.workoutView);for(const ex of w.exercises){const c=document.createElement('article');c.className='card';const head=document.createElement('div');head.className='exerciseTop';head.innerHTML=`<div><h3>${escapeHtml(ex.name)}</h3><div class="muted">I kg sono precompilati con il carico della stessa serie nell'ultimo allenamento, quando disponibile.</div><div class="mobileHint">Modifica ripetizioni e kg se oggi cambi carico. Il timer parte quando completi la serie.</div></div>`;const rb=document.createElement('button');rb.className='secondary';rb.textContent=`${ex.rest}s recupero`;rb.onclick=()=>setRest(ex.rest);head.appendChild(rb);c.appendChild(head);if(ex.notes){const notes=document.createElement('div');notes.className='notes';notes.style.whiteSpace='pre-wrap';notes.style.overflowWrap='anywhere';notes.textContent=ex.notes;c.appendChild(notes);}for(const s of ex.sets){const row=document.createElement('div');row.className='setRow'+(s.done?' completed':'');const previous=s.previousWeight!==null&&s.previousWeight!==undefined?`<div class="previousSetReference"><span>Ultima volta: <strong>${s.previousReps} rip. × ${s.previousWeight} kg</strong></span>${s.previousDate?`<span class="previousDate">${escapeHtml(s.previousDate)}</span>`:''}</div>`:'';row.innerHTML=`${previous}<label class="setCheck"><input type="checkbox" ${s.done?'checked':''}><span>Serie ${s.index}</span></label><label class="setField"><span>RIPETIZIONI</span><input class="reps" inputmode="numeric" type="number" min="0" max="100" value="${s.reps}"></label><label class="setField"><span>PESO KG</span><input class="weight" inputmode="decimal" type="number" min="0" max="1000" step="0.5" value="${s.weight}"></label>`;const chk=row.querySelector('input[type=checkbox]');chk.onchange=()=>{s.done=chk.checked;row.classList.toggle('completed',s.done);if(chk.checked)setRest(ex.rest);};row.querySelector('.weight').oninput=e=>s.weight=clamp(e.target.value,0,1000,0);row.querySelector('.reps').oninput=e=>s.reps=Math.round(clamp(e.target.value,0,100,0));c.appendChild(row);}els.workoutExercises.appendChild(c);}}
 function setRest(sec){clearInterval(restTicker);restInitial=Math.max(0,Math.round(sec));restRemaining=restInitial;$('restDisplay').textContent=formatTime(restRemaining);startRest();}
-function startRest(){clearInterval(restTicker);if(restRemaining<=0)return;restTicker=setInterval(()=>{restRemaining--;$('restDisplay').textContent=formatTime(restRemaining);if(restRemaining<=0){clearInterval(restTicker);notify('Recupero terminato.');}},1000);}
-function finishWorkout(){const w=state.workout;if(!w)return;const hasDone=w.exercises.some(ex=>ex.sets.some(s=>s.done));if(!hasDone)return notify('Completa almeno una serie prima di salvare.');const durationSeconds=Math.max(0,Math.floor((Date.now()-w.startedAt)/1000));state.history.push({date:new Date().toLocaleDateString('it-IT'),timestamp:Date.now(),durationSeconds,dayName:w.dayName,exercises:w.exercises.map(ex=>({name:ex.name,sets:ex.sets.map(s=>({...s}))}))});clearInterval(workoutTicker);clearInterval(restTicker);state.workout=null;state.homeDayId=null;save();renderHome();notify('Allenamento salvato. Progressi aggiornati.');}
-async function cancelWorkout(){if(!await confirmAction('Annulla allenamento','Vuoi uscire senza salvare questo allenamento?'))return;clearInterval(workoutTicker);clearInterval(restTicker);state.workout=null;renderHome();}
+let restAudio=null;
+let restAlarmNodes=[];
+function prepareRestAudio(){
+  try{
+    const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+    if(!AudioContextClass)return;
+    if(!restAudio||restAudio.state==='closed')restAudio=new AudioContextClass();
+    if(restAudio.state!=='running')restAudio.resume().catch(()=>{});
+  }catch{}
+}
+function stopRestAlarm(){
+  for(const node of restAlarmNodes){try{node.stop();}catch{}}
+  restAlarmNodes=[];
+}
+function playRestAlarm(){
+  stopRestAlarm();
+  if(!restAudio||restAudio.state!=='running')return;
+  try{
+    const start=restAudio.currentTime+0.02;
+    for(let i=0;i<8;i++){
+      const tone=restAudio.createOscillator();
+      const volume=restAudio.createGain();
+      const at=start+i*0.36;
+      tone.type='sine';
+      tone.frequency.value=i%2?1046.5:880;
+      volume.gain.setValueAtTime(0,at);
+      volume.gain.linearRampToValueAtTime(0.3,at+0.015);
+      volume.gain.setValueAtTime(0.3,at+0.18);
+      volume.gain.linearRampToValueAtTime(0,at+0.25);
+      tone.connect(volume);volume.connect(restAudio.destination);
+      tone.onended=()=>{tone.disconnect();volume.disconnect();restAlarmNodes=restAlarmNodes.filter(node=>node!==tone);};
+      restAlarmNodes.push(tone);
+      tone.start(at);tone.stop(at+0.26);
+    }
+  }catch{stopRestAlarm();}
+}
+function startRest(){clearInterval(restTicker);stopRestAlarm();if(restRemaining<=0)return;prepareRestAudio();const endsAt=Date.now()+restRemaining*1000;restTicker=setInterval(()=>{restRemaining=Math.max(0,Math.ceil((endsAt-Date.now())/1000));$('restDisplay').textContent=formatTime(restRemaining);if(restRemaining<=0){clearInterval(restTicker);playRestAlarm();notify('Recupero terminato.');}},200);}
+function finishWorkout(){const w=state.workout;if(!w)return;const hasDone=w.exercises.some(ex=>ex.sets.some(s=>s.done));if(!hasDone)return notify('Completa almeno una serie prima di salvare.');const durationSeconds=Math.max(0,Math.floor((Date.now()-w.startedAt)/1000));state.history.push({date:new Date().toLocaleDateString('it-IT'),timestamp:Date.now(),durationSeconds,dayName:w.dayName,exercises:w.exercises.map(ex=>({name:ex.name,sets:ex.sets.map(s=>({...s}))}))});clearInterval(workoutTicker);clearInterval(restTicker);stopRestAlarm();state.workout=null;state.homeDayId=null;save();renderHome();notify('Allenamento salvato. Progressi aggiornati.');}
+async function cancelWorkout(){if(!await confirmAction('Annulla allenamento','Vuoi uscire senza salvare questo allenamento?'))return;clearInterval(workoutTicker);clearInterval(restTicker);stopRestAlarm();state.workout=null;renderHome();}
 
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();const username=$('usernameInput').value.trim();const err=$('loginError');err.classList.add('hidden');$('loginBtn').disabled=true;$('loginBtn').textContent='Accesso…';try{await loginWithUsername(username);}catch(ex){err.textContent=ex.message||'Accesso non riuscito.';err.classList.remove('hidden');}finally{$('loginBtn').disabled=false;$('loginBtn').textContent='Continua';}});
 $('logoutBtn').onclick=async()=>{if(auth.token){try{await api('/api/logout',{method:'POST',body:'{}'});}catch{}}forceLogout();};
@@ -362,8 +398,8 @@ $('addExerciseBtn').onclick=()=>openExerciseForm();
 $('cancelExerciseBtn').onclick=closeExerciseForm;
 $('startWorkoutBtn').onclick=()=>beginWorkout();
 $('restStartBtn').onclick=startRest;
-$('restPauseBtn').onclick=()=>clearInterval(restTicker);
-$('restResetBtn').onclick=()=>{clearInterval(restTicker);restRemaining=restInitial;$('restDisplay').textContent=formatTime(restRemaining);};
+$('restPauseBtn').onclick=()=>{clearInterval(restTicker);stopRestAlarm();};
+$('restResetBtn').onclick=()=>{clearInterval(restTicker);stopRestAlarm();restRemaining=restInitial;$('restDisplay').textContent=formatTime(restRemaining);};
 $('finishWorkoutBtn').onclick=finishWorkout;
 $('cancelWorkoutBtn').onclick=cancelWorkout;
 $('navHomeBtn').onclick=renderHome;
