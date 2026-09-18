@@ -2,6 +2,14 @@
 
 Questa versione corregge la configurazione D1 e semplifica la pubblicazione su Windows.
 
+## Aggiornare la web app già esistente
+
+Per la pubblicazione da GitHub, collegare il repository `angimilan1995/Gymtrack` al Worker `gymtrack-webapp`, scegliendo il branch `main` e il comando di deploy `npx wrangler deploy`. Dopo il collegamento, un nuovo commit su `main` avvia Workers Builds.
+
+Il file `wrangler.jsonc` contiene già il collegamento al database `gymtrack-db`. Per aggiornare questa installazione non eseguire nuovamente la creazione del database o `schema.sql`: pubblicare soltanto l'app. Su Windows è disponibile anche `AGGIORNA_WEBAPP.cmd`.
+
+Le istruzioni di setup qui sotto servono per una nuova installazione.
+
 ## Metodo consigliato su Windows
 
 1. Installa **Node.js LTS** da https://nodejs.org/ se non lo hai già.
